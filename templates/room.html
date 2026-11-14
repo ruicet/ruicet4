@@ -39,7 +39,7 @@
             padding: 8px 16px; border-radius: 8px; font-family: 'Courier New', monospace;
             font-size: 20px; font-weight: bold; border: 1px solid var(--border);
             pointer-events: none; z-index: 15; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            display: none; /* Скрыт по умолчанию */
+            display: none;
         }
 
         /* Заглушка, если видео не загрузилось */
@@ -117,7 +117,7 @@
     <header>
         <div class="logo">▶ <span>WPARTY</span></div>
         <div class="video-input-area">
-            <input type="text" id="video-url" placeholder="Ссылка на MP4, Rutube, VK или YouTube">
+            <input type="text" id="video-url" placeholder="Ссылка на YouTube, VK, Rutube или MP4">
             <button id="load-btn">Загрузить</button>
         </div>
         <div class="user-area">
@@ -279,7 +279,6 @@
                     setTimeout(() => { isRemoteAction = false; }, 300);
                 }
                 else {
-                    // Для iframe (ВК, Rutube) мы просто обновляем таймер визуально
                     timeBadge.innerText = formatTime(data.time);
                 }
             });
@@ -351,7 +350,7 @@
             });
         }
 
-        // --- ПЛЕЕР ---
+        // --- УМНАЯ ЗАГРУЗКА ПЛЕЕРА ---
         function loadVideo(url) {
             url = url.trim();
             videoContainer.innerHTML = '';
@@ -364,9 +363,20 @@
             clearInterval(hostTimer);
             if (hls) { hls.destroy(); hls = null; }
 
-            // Регулярка для ВК
-            const vkMatch = url.match(/video(-?\d+)_(\d+)/);
-            
+            // 1. YOUTUBE
+            const ytMatch = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
+            if (ytMatch && ytMatch[1]) {
+                currentPlatform = 'youtube';
+                const iframe = document.createElement('iframe');
+                iframe.src = `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=0&enablejsapi=1`;
+                iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+                iframe.allowFullscreen = true;
+                videoContainer.appendChild(iframe);
+                timeBadge.style.display = 'block';
+                return;
+            }
+
+            // 2. RUTUBE
             if (url.includes('rutube.ru')) {
                 currentPlatform = 'rutube';
                 let videoId = url.split('/').pop().split('?')[0];
@@ -374,64 +384,69 @@
                 iframe.src = `https://rutube.ru/play/embed/${videoId}/?api=1`;
                 iframe.allow = "clipboard-write; autoplay; fullscreen";
                 videoContainer.appendChild(iframe);
-                timeBadge.style.display = 'block'; // Показываем таймер для синхронизации
+                timeBadge.style.display = 'block';
+                return;
             }
-            else if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
+            
+            // 3. VK VIDEO (Исправлен парсинг)
+            if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
                 currentPlatform = 'vk';
+                const vkMatch = url.match(/(?:video|embed\/)(-?\d+)_(\d+)/);
                 if (vkMatch) {
-                    let oid = vkMatch[1];
+                    let oid = vkMatch[1]; // Оставляем как есть, минус уже в строке
                     let id = vkMatch[2];
                     const iframe = document.createElement('iframe');
-                    iframe.src = `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&autoplay=1`;
+                    iframe.src = `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&autoplay=0`;
                     iframe.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
                     videoContainer.appendChild(iframe);
-                    timeBadge.style.display = 'block'; 
+                    timeBadge.style.display = 'block';
                 } else {
                     document.getElementById('video-error').style.display = 'flex';
                     document.getElementById('direct-link').href = url;
                 }
+                return;
             }
-            else {
-                currentPlatform = 'direct';
-                player = document.createElement('video');
-                player.controls = isHost; // Только хост может управлять
-                player.crossOrigin = "anonymous";
-                player.style.width = "100%";
-                player.style.height = "100%";
-                videoContainer.appendChild(player);
-                timeBadge.style.display = 'block';
 
-                if (url.includes('.m3u8') && Hls.isSupported()) {
-                    hls = new Hls();
-                    hls.loadSource(url);
-                    hls.attachMedia(player);
-                } else {
-                    player.src = url;
+            // 4. DIRECT LINK (MP4 / M3U8)
+            currentPlatform = 'direct';
+            player = document.createElement('video');
+            player.controls = isHost; 
+            player.crossOrigin = "anonymous";
+            player.style.width = "100%";
+            player.style.height = "100%";
+            videoContainer.appendChild(player);
+            timeBadge.style.display = 'block';
+
+            if (url.includes('.m3u8') && Hls.isSupported()) {
+                hls = new Hls();
+                hls.loadSource(url);
+                hls.attachMedia(player);
+            } else {
+                player.src = url;
+            }
+            player.load();
+
+            player.addEventListener('play', () => { 
+                if (isHost && !isRemoteAction) {
+                    socket.emit('sync', { room: roomId, action: 'play', time: player.currentTime, is_playing: true });
+                    startHostTimer();
                 }
-                player.load();
-
-                player.addEventListener('play', () => { 
-                    if (isHost && !isRemoteAction) {
-                        socket.emit('sync', { room: roomId, action: 'play', time: player.currentTime, is_playing: true });
-                        startHostTimer();
-                    }
-                });
-                player.addEventListener('pause', () => { 
-                    if (isHost && !isRemoteAction) {
-                        socket.emit('sync', { room: roomId, action: 'pause', time: player.currentTime, is_playing: false });
-                        clearInterval(hostTimer);
-                    }
-                });
-                player.addEventListener('seeked', () => { 
-                    if (isHost && !isRemoteAction) socket.emit('sync', { room: roomId, action: 'seek', time: player.currentTime, is_playing: !player.paused });
-                });
-                player.addEventListener('timeupdate', () => {
-                    timeBadge.innerText = formatTime(player.currentTime);
-                });
-            }
+            });
+            player.addEventListener('pause', () => { 
+                if (isHost && !isRemoteAction) {
+                    socket.emit('sync', { room: roomId, action: 'pause', time: player.currentTime, is_playing: false });
+                    clearInterval(hostTimer);
+                }
+            });
+            player.addEventListener('seeked', () => { 
+                if (isHost && !isRemoteAction) socket.emit('sync', { room: roomId, action: 'seek', time: player.currentTime, is_playing: !player.paused });
+            });
+            player.addEventListener('timeupdate', () => {
+                timeBadge.innerText = formatTime(player.currentTime);
+            });
         }
 
-        // Ручной таймер для ВК и Rutube (так как iframe не отдает точное время)
+        // Ручной таймер для встроенных плееров (ВК, YouTube, Rutube)
         function startHostTimer() {
             clearInterval(hostTimer);
             hostTimer = setInterval(() => {
