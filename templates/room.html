@@ -34,21 +34,26 @@
 
         /* Бейдж с временем */
         #time-badge {
-            position: absolute;
-            top: 20px; right: 20px;
-            background: rgba(15, 17, 26, 0.85);
-            color: var(--accent);
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-family: 'Courier New', monospace;
-            font-size: 18px;
-            font-weight: bold;
-            border: 1px solid var(--border);
-            pointer-events: none;
-            z-index: 15;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            display: none; /* Скрыт, пока нет видео */
+            position: absolute; top: 20px; right: 20px;
+            background: rgba(15, 17, 26, 0.85); color: var(--accent);
+            padding: 8px 16px; border-radius: 8px; font-family: 'Courier New', monospace;
+            font-size: 20px; font-weight: bold; border: 1px solid var(--border);
+            pointer-events: none; z-index: 15; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
+
+        /* Невидимый щит для гостя, чтобы он не мог кликать по iframe */
+        #guest-blocker {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 12; background: transparent; display: none; cursor: not-allowed;
+        }
+
+        /* Оверлей автоплея (если браузер блокирует звук) */
+        #autoplay-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); display: none; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 20; cursor: pointer;
+        }
+        #autoplay-overlay h2 { color: white; font-size: 24px; text-align: center; padding: 20px; background: var(--accent); border-radius: 10px; }
 
         /* Чат */
         .sidebar { width: 360px; background: var(--panel); display: flex; flex-direction: column; border-left: 1px solid var(--border); }
@@ -86,7 +91,7 @@
         .tab-content.active { display: flex; }
         #error-banner { position: fixed; top: 0; left: 0; width: 100%; background: #ef4444; color: white; text-align: center; padding: 10px; font-weight: bold; z-index: 999; display: none; }
 
-        /* Модальное окно ввода имени */
+        /* Модалка ввода имени */
         #name-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         .modal-box { background: var(--panel); padding: 30px; border-radius: 12px; width: 90%; max-width: 350px; text-align: center; border: 1px solid var(--border); }
         .modal-box h2 { margin-bottom: 20px; font-size: 20px; }
@@ -98,7 +103,7 @@
             .video-container { flex: none; height: 40vh; }
             .sidebar { width: 100%; flex: 1; border-left: none; border-top: 1px solid var(--border); }
             .video-input-area { display: none; }
-            #time-badge { top: 10px; right: 10px; font-size: 14px; padding: 4px 8px; }
+            #time-badge { top: 10px; right: 10px; font-size: 16px; padding: 4px 8px; }
         }
     </style>
 </head>
@@ -116,12 +121,10 @@
 
     <header>
         <div class="logo">▶ <span>WPARTY</span></div>
-        
         <div class="video-input-area">
             <input type="text" id="video-url" placeholder="Ссылка на MP4, Rutube, VK или YouTube">
             <button id="load-btn">Загрузить</button>
         </div>
-
         <div class="user-area">
             <div class="btn-session" id="role-badge">Подключение...</div>
             <div class="avatar" id="my-avatar">?</div>
@@ -130,9 +133,14 @@
 
     <main>
         <div class="video-container" id="video-container">
-            <!-- Бейдж времени -->
             <div id="time-badge">00:00:00</div>
             <video id="player" controls crossorigin="anonymous"></video>
+            <!-- Щит, который не дает гостю нажать на видео -->
+            <div id="guest-blocker"></div>
+            <!-- Оверлей, если браузер блокирует автоплей -->
+            <div id="autoplay-overlay" onclick="enableAutoplay()">
+                <h2>▶ Нажмите, чтобы начать просмотр</h2>
+            </div>
         </div>
 
         <div class="sidebar">
@@ -155,7 +163,6 @@
                 <div class="settings-area">
                     <div class="setting-item">
                         <label>Пригласительная ссылка</label>
-                        <p style="font-size: 12px; color: var(--dim); margin-bottom: 10px;">Отправьте эту ссылку другу, чтобы он подключился к просмотру.</p>
                         <div class="copy-box">
                             <input type="text" id="invite-link" readonly>
                             <button onclick="copyLink()">Копировать</button>
@@ -173,17 +180,18 @@
         
         let isHost = false;
         let currentPlatform = '';
-        let lastHostTime = 0; // Храним время хоста для принудительной синхронизации
+        let lastHostTime = 0;
         let hostIsPlaying = false;
+        let syncInterval;
         
         const timeBadge = document.getElementById('time-badge');
         const videoContainer = document.getElementById('video-container');
+        const guestBlocker = document.getElementById('guest-blocker');
         let player = document.getElementById('player');
         let iframePlayer = null;
         let isRemoteAction = false;
         let hls;
 
-        // Форматирование времени в ЧЧ:ММ:СС
         function formatTime(seconds) {
             if (isNaN(seconds) || seconds === undefined) return '00:00:00';
             const h = Math.floor(seconds / 3600);
@@ -194,8 +202,6 @@
 
         function startApp() {
             document.getElementById('my-avatar').innerText = myNickname[0].toUpperCase();
-            
-            // Убираем ?nickname из URL при копировании
             const url = new URL(window.location.href);
             url.searchParams.delete('nickname');
             document.getElementById('invite-link').value = url.toString();
@@ -208,7 +214,6 @@
             socket.on('disconnect', () => {
                 document.getElementById('error-banner').style.display = 'block';
             });
-            
             initSockets();
         }
 
@@ -244,13 +249,15 @@
                     badge.style.color = "#4ade80";
                     urlInput.disabled = false;
                     loadBtn.disabled = false;
+                    guestBlocker.style.display = 'none'; // Хост может кликать
                 } else {
                     badge.innerText = "Зритель";
                     badge.style.color = "#8b92a5";
                     urlInput.disabled = true;
                     loadBtn.disabled = true;
+                    guestBlocker.style.display = 'block'; // Гость не может кликать по видео
                 }
-                if (data.video_url) loadVideo(data.video_url);
+                if (data.video_url) loadVideo(data.video_url, true);
             });
 
             document.getElementById('load-btn').addEventListener('click', () => {
@@ -259,35 +266,36 @@
             });
 
             socket.on('video_changed', (data) => {
-                loadVideo(data.url);
+                loadVideo(data.url, true);
                 document.getElementById('video-url').value = data.url;
+                hostIsPlaying = false;
+                lastHostTime = 0;
+                timeBadge.innerText = '00:00:00';
             });
 
-            // Прием синхронизации
+            // --- ЖЕСТКАЯ СИНХРОНИЗАЦИЯ ---
             socket.on('sync', (data) => {
-                // Если мы хост, мы игнорируем входящие синхронизации
-                if (isHost) return;
+                if (isHost) return; // Хост игнорирует команды
 
+                hostIsPlaying = data.is_playing;
                 lastHostTime = data.time;
-                hostIsPlaying = (data.action === 'play' || data.action === 'ping' || data.action === 'seek');
 
                 if (currentPlatform === 'direct' && player) {
                     isRemoteAction = true;
-                    
-                    // Если это пинг (проверка) и мы отстали/убежали — догоняем
-                    if (data.action === 'ping') {
-                        if (Math.abs(player.currentTime - data.time) > 1.5) {
-                            player.currentTime = data.time;
-                        }
-                        if (hostIsPlaying && player.paused) player.play();
-                    } else {
-                        // Обычные действия
-                        if (Math.abs(player.currentTime - data.time) > 0.5) player.currentTime = data.time;
-                        if (data.action === 'play') player.play();
-                        if (data.action === 'pause') player.pause();
+                    if (data.action === 'play') {
+                        if (player.paused) player.play().catch(e => showAutoplay());
+                        if (Math.abs(player.currentTime - data.time) > 1.0) player.currentTime = data.time;
+                    } 
+                    else if (data.action === 'pause') {
+                        if (!player.paused) player.pause();
+                        player.currentTime = data.time;
                     }
-                    
-                    setTimeout(() => { isRemoteAction = false; }, 300);
+                    else if (data.action === 'seek' || data.action === 'ping') {
+                        if (Math.abs(player.currentTime - data.time) > 1.5) player.currentTime = data.time;
+                        if (hostIsPlaying && player.paused) player.play().catch(e => showAutoplay());
+                        if (!hostIsPlaying && !player.paused) player.pause();
+                    }
+                    setTimeout(() => { isRemoteAction = false; }, 500);
                 } 
                 else if (currentPlatform === 'rutube' && iframePlayer) {
                     if (data.action === 'play') iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:play', data: {} }), '*');
@@ -303,7 +311,6 @@
             // --- ЧАТ ---
             const chatBox = document.getElementById('chat-messages');
             const chatInput = document.getElementById('chat-input');
-
             function sendMsg() {
                 const text = chatInput.value.trim();
                 if (text) {
@@ -311,7 +318,6 @@
                     chatInput.value = '';
                 }
             }
-
             document.getElementById('send-btn').addEventListener('click', sendMsg);
             chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMsg(); });
 
@@ -369,16 +375,21 @@
             });
         }
 
-        // --- ПЛЕЕР ---
-        function loadVideo(url) {
+        // --- УПРАВЛЕНИЕ ПЛЕЕРОМ ---
+        function loadVideo(url, isInit = false) {
             videoContainer.innerHTML = '';
-            // Возвращаем бейдж времени обратно в контейнер, так как innerHTML очищает его
-            videoContainer.appendChild(timeBadge); 
+            videoContainer.appendChild(timeBadge);
+            videoContainer.appendChild(guestBlocker);
+            videoContainer.appendChild(document.getElementById('autoplay-overlay'));
+
             timeBadge.style.display = 'block';
             timeBadge.innerText = '00:00:00';
+            guestBlocker.style.display = isHost ? 'none' : 'block';
+            document.getElementById('autoplay-overlay').style.display = 'none';
 
             if (hls) { hls.destroy(); hls = null; }
             iframePlayer = null;
+            clearInterval(syncInterval);
 
             if (url.includes('rutube.ru')) {
                 currentPlatform = 'rutube';
@@ -387,7 +398,7 @@
                 iframePlayer.src = `https://rutube.ru/play/embed/${videoId}/?api=1`;
                 iframePlayer.allow = "clipboard-write; autoplay; fullscreen";
                 videoContainer.appendChild(iframePlayer);
-                timeBadge.style.display = 'none'; // Скрываем для Rutube (нет прямого API времени)
+                timeBadge.style.display = 'none'; // Таймер только для MP4
             }
             else if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
                 currentPlatform = 'vk';
@@ -398,17 +409,16 @@
                 iframePlayer.src = `https://vk.com/video_ext.php?oid=-${oid}&id=${id}&hd=2&autoplay=0`;
                 iframePlayer.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
                 videoContainer.appendChild(iframePlayer);
-                timeBadge.style.display = 'none'; // Скрываем для VK
+                timeBadge.style.display = 'none';
             }
             else {
                 currentPlatform = 'direct';
                 player = document.createElement('video');
-                player.controls = true;
+                player.controls = isHost; // У гостя НЕТ кнопок управления!
                 player.crossOrigin = "anonymous";
                 player.style.width = "100%";
                 player.style.height = "100%";
                 videoContainer.appendChild(player);
-                videoContainer.appendChild(timeBadge); // Бейдж поверх видео
 
                 if (url.includes('.m3u8') && Hls.isSupported()) {
                     hls = new Hls();
@@ -419,33 +429,59 @@
                 }
                 player.load();
 
-                // --- УПРАВЛЕНИЕ ТОЛЬКО ДЛЯ ХОСТА ---
+                // --- ЕСЛИ ЭТО ХОСТ ---
                 player.addEventListener('play', () => { 
-                    if (isHost && !isRemoteAction) socket.emit('sync', { room: roomId, action: 'play', time: player.currentTime }); 
-                    if (!isHost && !isRemoteAction) player.pause(); // Гость не может играть сам
+                    if (isHost && !isRemoteAction) {
+                        socket.emit('sync', { room: roomId, action: 'play', time: player.currentTime, is_playing: true });
+                        startSyncPing();
+                    }
                 });
-                
                 player.addEventListener('pause', () => { 
-                    if (isHost && !isRemoteAction) socket.emit('sync', { room: roomId, action: 'pause', time: player.currentTime }); 
-                    if (!isHost && !isRemoteAction && hostIsPlaying) player.play(); // Гость не может ставить на паузу, если хост смотрит
+                    if (isHost && !isRemoteAction) {
+                        socket.emit('sync', { room: roomId, action: 'pause', time: player.currentTime, is_playing: false });
+                        stopSyncPing();
+                    }
                 });
-
                 player.addEventListener('seeked', () => { 
-                    if (isHost && !isRemoteAction) socket.emit('sync', { room: roomId, action: 'seek', time: player.currentTime }); 
-                    if (!isHost && !isRemoteAction) player.currentTime = lastHostTime; // Возвращаем гостя на время хоста
+                    if (isHost && !isRemoteAction) socket.emit('sync', { room: roomId, action: 'seek', time: player.currentTime, is_playing: !player.paused });
                 });
-
-                // Обновление таймера
                 player.addEventListener('timeupdate', () => {
                     timeBadge.innerText = formatTime(player.currentTime);
                 });
 
-                // Хост каждые 3 секунды отправляет "пинг" для жесткой синхронизации
-                setInterval(() => {
-                    if (isHost && !player.paused) {
-                        socket.emit('sync', { room: roomId, action: 'ping', time: player.currentTime });
+                // --- ЕСЛИ ЭТО ГОСТЬ ---
+                if (!isHost && isInit) {
+                    // Если хост уже включил видео, пытаемся его запустить
+                    if (hostIsPlaying) {
+                        player.currentTime = lastHostTime;
+                        player.play().catch(e => showAutoplay());
                     }
-                }, 3000);
+                }
+            }
+        }
+
+        function startSyncPing() {
+            clearInterval(syncInterval);
+            syncInterval = setInterval(() => {
+                if (isHost && !player.paused) {
+                    socket.emit('sync', { room: roomId, action: 'ping', time: player.currentTime, is_playing: true });
+                }
+            }, 2000);
+        }
+        
+        function stopSyncPing() {
+            clearInterval(syncInterval);
+        }
+
+        function showAutoplay() {
+            document.getElementById('autoplay-overlay').style.display = 'flex';
+        }
+
+        function enableAutoplay() {
+            document.getElementById('autoplay-overlay').style.display = 'none';
+            if (currentPlatform === 'direct' && player) {
+                player.currentTime = lastHostTime;
+                player.play().catch(e => console.log(e));
             }
         }
 
