@@ -1,1 +1,30 @@
-
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WParty - Создать комнату</title>
+    <style>
+        :root { --bg: #0f111a; --panel: #1a1d2e; --accent: #4a6ee0; --text: #ffffff; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+        body { background: var(--bg); color: var(--text); display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .box { background: var(--panel); padding: 40px; border-radius: 16px; width: 100%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); text-align: center; }
+        h1 { font-size: 28px; color: var(--accent); margin-bottom: 10px; font-weight: 900; letter-spacing: 1px; }
+        p { color: #8b92a5; font-size: 14px; margin-bottom: 25px; }
+        input { width: 100%; padding: 15px; background: var(--bg); border: 1px solid #2a2f45; border-radius: 8px; color: white; font-size: 16px; margin-bottom: 20px; outline: none; }
+        input:focus { border-color: var(--accent); }
+        button { width: 100%; padding: 15px; background: var(--accent); border: none; border-radius: 8px; color: white; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #3b5bca; }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h1>WPARTY</h1>
+        <p>Совместный просмотр видео для двоих</p>
+        <form action="/create" method="POST">
+            <input type="text" name="nickname" placeholder="Ваш никнейм" required maxlength="15">
+            <button type="submit">Создать комнату</button>
+        </form>
+    </div>
+</body>
+</html>
