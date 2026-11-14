@@ -29,17 +29,14 @@
         /* Основная зона */
         main { display: flex; flex: 1; overflow: hidden; }
         .video-container { flex: 1; background: #000; display: flex; align-items: center; justify-content: center; position: relative; }
-        
-        /* Стили для прямого видео и iframe */
         video { width: 100%; height: 100%; max-height: 100vh; background: #000; outline: none; }
         iframe { width: 100%; height: 100%; border: none; }
 
-        /* Правая часть - Чат */
+        /* Чат */
         .sidebar { width: 360px; background: var(--panel); display: flex; flex-direction: column; border-left: 1px solid var(--border); }
         .sidebar-tabs { display: flex; border-bottom: 1px solid var(--border); }
         .tab { flex: 1; text-align: center; padding: 15px; font-weight: 600; font-size: 14px; color: var(--dim); cursor: pointer; }
         .tab.active { color: var(--text); border-bottom: 2px solid var(--accent); }
-
         .chat-messages { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 15px; }
         .msg { display: flex; gap: 12px; position: relative; }
         .msg-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; font-size: 14px; }
@@ -47,16 +44,14 @@
         .msg-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
         .msg-name { font-weight: 700; font-size: 13px; color: var(--text); }
         .msg-time { font-size: 11px; color: var(--dim); }
-        .msg-text { font-size: 14px; line-height: 1.4; color: #cbd5e1; background: rgba(255,255,255,0.05); padding: 8px 12px; border-radius: 0 12px 12px 12px; display: inline-block; word-break: break-word; }
+        .msg-text { font-size: 14px; line-height: 1.4; color: #cbd5e1; background: rgba(255,255,255,0.05); padding: 8px 12px; border-radius: 0 12px 12px 12px; display: inline-block; }
         .sys-msg { text-align: center; font-size: 12px; color: var(--dim); margin: 10px 0; }
-        
         .reactions { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
         .reaction-badge { background: var(--bg); border: 1px solid var(--border); padding: 2px 6px; border-radius: 99px; font-size: 12px; }
         .react-menu { position: absolute; right: 0; top: -35px; background: var(--panel); border: 1px solid var(--border); border-radius: 99px; display: none; gap: 5px; padding: 5px 10px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); z-index: 10; }
         .msg:hover .react-menu { display: flex; }
         .react-menu span { cursor: pointer; font-size: 18px; transition: 0.2s; }
         .react-menu span:hover { transform: scale(1.3); }
-
         .chat-input-area { padding: 15px; border-top: 1px solid var(--border); }
         .chat-input-box { display: flex; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 5px 5px 5px 15px; }
         .chat-input-box input { flex: 1; background: transparent; border: none; color: var(--text); outline: none; font-size: 14px; }
@@ -71,8 +66,14 @@
 
         .tab-content { flex: 1; display: none; flex-direction: column; overflow: hidden; }
         .tab-content.active { display: flex; }
-
         #error-banner { position: fixed; top: 0; left: 0; width: 100%; background: #ef4444; color: white; text-align: center; padding: 10px; font-weight: bold; z-index: 999; display: none; }
+
+        /* Модальное окно ввода имени */
+        #name-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .modal-box { background: var(--panel); padding: 30px; border-radius: 12px; width: 90%; max-width: 350px; text-align: center; border: 1px solid var(--border); }
+        .modal-box h2 { margin-bottom: 20px; font-size: 20px; }
+        .modal-box input { width: 100%; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: white; margin-bottom: 15px; outline: none; }
+        .modal-box button { width: 100%; padding: 12px; background: var(--accent); border: none; border-radius: 6px; color: white; font-weight: bold; cursor: pointer; }
 
         @media (max-width: 800px) {
             main { flex-direction: column; }
@@ -83,6 +84,15 @@
     </style>
 </head>
 <body>
+
+    <!-- Модальное окно ввода имени (появится, если нет ника) -->
+    <div id="name-modal" style="display: none;">
+        <div class="modal-box">
+            <h2>Введите ваш никнейм</h2>
+            <input type="text" id="name-input" placeholder="Например: Киноман" maxlength="15">
+            <button onclick="submitName()">Войти в комнату</button>
+        </div>
+    </div>
 
     <div id="error-banner">⚠️ Нет соединения с сервером. Обновите страницу.</div>
 
@@ -131,15 +141,6 @@
                             <button onclick="copyLink()">Копировать</button>
                         </div>
                     </div>
-                    <div class="setting-item" style="margin-top: 20px;">
-                        <label>Поддерживаемые платформы</label>
-                        <p style="font-size: 12px; color: var(--dim); line-height: 1.5;">
-                            ✅ Прямые ссылки (.mp4, .m3u8)<br>
-                            ✅ Rutube<br>
-                            ✅ VK Video<br>
-                            ✅ YouTube
-                        </p>
-                    </div>
                 </div>
             </div>
         </div>
@@ -147,92 +148,211 @@
 
     <script>
         const roomId = "{{ room_id }}";
-        const myNickname = "{{ nickname }}";
+        let myNickname = "{{ nickname }}"; // Сюда придет либо ник, либо "None"
         const socket = io();
         let isHost = false;
         let currentPlatform = '';
         
-        document.getElementById('my-avatar').innerText = myNickname[0].toUpperCase();
-        document.getElementById('invite-link').value = window.location.href;
+        // Функция запуска сайта (вызывается после ввода ника)
+        function startApp() {
+            document.getElementById('my-avatar').innerText = myNickname[0].toUpperCase();
+            
+            // Генерируем чистую ссылку БЕЗ ?nickname=...
+            const url = new URL(window.location.href);
+            url.searchParams.delete('nickname');
+            document.getElementById('invite-link').value = url.toString();
 
-        socket.on('connect', () => {
-            document.getElementById('error-banner').style.display = 'none';
-            socket.emit('join', { room: roomId, nickname: myNickname });
-        });
+            socket.on('connect', () => {
+                document.getElementById('error-banner').style.display = 'none';
+                socket.emit('join', { room: roomId, nickname: myNickname });
+            });
 
-        socket.on('disconnect', () => {
-            document.getElementById('error-banner').style.display = 'block';
-        });
+            socket.on('disconnect', () => {
+                document.getElementById('error-banner').style.display = 'block';
+            });
+            
+            // ... (остальной код сокетов и плеера, он ниже)
+            initSockets();
+            initPlayer();
+        }
 
-        socket.on('you_are_host', (data) => {
-            isHost = data.is_host;
-            const badge = document.getElementById('role-badge');
-            const urlInput = document.getElementById('video-url');
-            const loadBtn = document.getElementById('load-btn');
+        // Проверка: если зашли по чистой ссылке (без ника) — показываем окно
+        if (myNickname === 'None' || myNickname === '' || !myNickname) {
+            document.getElementById('name-modal').style.display = 'flex';
+            document.getElementById('name-input').focus();
+        } else {
+            startApp();
+        }
 
-            if (isHost) {
-                badge.innerText = "Создатель";
-                badge.style.color = "#4ade80";
-                urlInput.disabled = false;
-                loadBtn.disabled = false;
-            } else {
-                badge.innerText = "Зритель";
-                badge.style.color = "#8b92a5";
-                urlInput.disabled = true;
-                loadBtn.disabled = true;
+        // Сохранение ника из модального окна
+        function submitName() {
+            const val = document.getElementById('name-input').value.trim();
+            if (val) {
+                myNickname = val;
+                document.getElementById('name-modal').style.display = 'none';
+                startApp();
             }
-            if (data.video_url) loadVideo(data.video_url);
+        }
+
+        document.getElementById('name-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') submitName();
         });
 
-        // --- ВИДЕО ПЛЕЕР ---
+        // --- ВСЯ ЛОГИКА СИНХРОНИЗАЦИИ И ЧАТА ---
+        function initSockets() {
+            socket.on('you_are_host', (data) => {
+                isHost = data.is_host;
+                const badge = document.getElementById('role-badge');
+                const urlInput = document.getElementById('video-url');
+                const loadBtn = document.getElementById('load-btn');
+
+                if (isHost) {
+                    badge.innerText = "Создатель";
+                    badge.style.color = "#4ade80";
+                    urlInput.disabled = false;
+                    loadBtn.disabled = false;
+                } else {
+                    badge.innerText = "Зритель";
+                    badge.style.color = "#8b92a5";
+                    urlInput.disabled = true;
+                    loadBtn.disabled = true;
+                }
+                if (data.video_url) loadVideo(data.video_url);
+            });
+
+            document.getElementById('load-btn').addEventListener('click', () => {
+                const url = document.getElementById('video-url').value;
+                if (url && isHost) socket.emit('set_video', { room: roomId, url: url });
+            });
+
+            socket.on('video_changed', (data) => {
+                loadVideo(data.url);
+                document.getElementById('video-url').value = data.url;
+            });
+
+            socket.on('sync', (data) => {
+                if (currentPlatform === 'direct' && player) {
+                    isRemoteAction = true;
+                    if (Math.abs(player.currentTime - data.time) > 0.5) player.currentTime = data.time;
+                    if (data.action === 'play') player.play();
+                    if (data.action === 'pause') player.pause();
+                    setTimeout(() => { isRemoteAction = false; }, 300);
+                } 
+                else if (currentPlatform === 'rutube' && iframePlayer) {
+                    if (data.action === 'play') iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:play', data: {} }), '*');
+                    else if (data.action === 'pause') iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:pause', data: {} }), '*');
+                    else if (data.action === 'seek') iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:seek', data: { time: data.time } }), '*');
+                }
+                else if (currentPlatform === 'vk' && iframePlayer) {
+                    if (data.action === 'play') iframePlayer.contentWindow.postMessage('play', '*');
+                    else if (data.action === 'pause') iframePlayer.contentWindow.postMessage('pause', '*');
+                }
+            });
+
+            // ЧАТ
+            const chatBox = document.getElementById('chat-messages');
+            const chatInput = document.getElementById('chat-input');
+
+            function sendMsg() {
+                const text = chatInput.value.trim();
+                if (text) {
+                    socket.emit('chat', { room: roomId, nickname: myNickname, text: text });
+                    chatInput.value = '';
+                }
+            }
+
+            document.getElementById('send-btn').addEventListener('click', sendMsg);
+            chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMsg(); });
+
+            socket.on('chat', (data) => {
+                const el = document.createElement('div');
+                el.className = 'msg';
+                el.id = `msg-${data.msg_id}`;
+                el.innerHTML = `
+                    <div class="msg-avatar" style="background: ${getColor(data.nickname)}">${data.nickname[0].toUpperCase()}</div>
+                    <div class="msg-body">
+                        <div class="msg-head">
+                            <span class="msg-name">${data.nickname}</span>
+                            <span class="msg-time">${data.time}</span>
+                        </div>
+                        <div class="msg-text">${data.text}</div>
+                        <div class="reactions" id="reacts-${data.msg_id}"></div>
+                    </div>
+                    <div class="react-menu">
+                        <span onclick="sendReact('${data.msg_id}', '👍')">👍</span>
+                        <span onclick="sendReact('${data.msg_id}', '❤️')">❤️</span>
+                        <span onclick="sendReact('${data.msg_id}', '😂')">😂</span>
+                        <span onclick="sendReact('${data.msg_id}', '🔥')">🔥</span>
+                    </div>
+                `;
+                chatBox.appendChild(el);
+                chatBox.scrollTop = chatBox.scrollHeight;
+            });
+
+            socket.on('system_message', (data) => {
+                const el = document.createElement('div');
+                el.className = 'sys-msg';
+                el.innerText = data.text;
+                chatBox.appendChild(el);
+                chatBox.scrollTop = chatBox.scrollHeight;
+            });
+
+            // Реакции
+            window.sendReact = function(msgId, emoji) {
+                socket.emit('react', { room: roomId, msg_id: msgId, emoji: emoji });
+            }
+
+            socket.on('react', (data) => {
+                const box = document.getElementById(`reacts-${data.msg_id}`);
+                if (box) {
+                    let existing = Array.from(box.children).find(el => el.innerText.includes(data.emoji));
+                    if (existing) {
+                        let count = parseInt(existing.innerText.replace(data.emoji, '').trim()) || 1;
+                        existing.innerText = `${data.emoji} ${count + 1}`;
+                    } else {
+                        const badge = document.createElement('div');
+                        badge.className = 'reaction-badge';
+                        badge.innerText = `${data.emoji} 1`;
+                        box.appendChild(badge);
+                    }
+                }
+            });
+        }
+
+        // --- ПЛЕЕР ---
         const videoContainer = document.getElementById('video-container');
         let player = document.getElementById('player');
         let iframePlayer = null;
         let isRemoteAction = false;
         let hls;
 
+        function initPlayer() {
+            // Первичная инициализация при загрузке
+        }
+
         function loadVideo(url) {
             videoContainer.innerHTML = '';
             if (hls) { hls.destroy(); hls = null; }
             iframePlayer = null;
 
-            // 1. Проверяем Rutube
             if (url.includes('rutube.ru')) {
                 currentPlatform = 'rutube';
-                let videoId = '';
-                let accessKey = '';
-                
-                if (url.includes('/video/')) {
-                    let parts = url.split('/');
-                    videoId = parts[parts.length - 1].split('?')[0];
-                    if (url.includes('?p=')) accessKey = url.split('?p=')[1];
-                } else if (url.includes('/play/embed/')) {
-                    let parts = url.split('/');
-                    videoId = parts[parts.length - 1].split('?')[0];
-                    if (url.includes('?p=')) accessKey = url.split('?p=')[1];
-                }
-
+                let videoId = url.split('/').pop().split('?')[0];
                 iframePlayer = document.createElement('iframe');
-                let src = `https://rutube.ru/play/embed/${videoId}/?api=1`;
-                if (accessKey) src += `&p=${accessKey}`;
-                
-                iframePlayer.src = src;
+                iframePlayer.src = `https://rutube.ru/play/embed/${videoId}/?api=1`;
                 iframePlayer.allow = "clipboard-write; autoplay; fullscreen";
                 videoContainer.appendChild(iframePlayer);
             }
-            // 2. Проверяем VK Video
             else if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
                 currentPlatform = 'vk';
                 let videoId = url.split('/').pop().split('?')[0]; 
                 let oid = videoId.split('_')[0].replace('video', '').replace('-', '');
                 let id = videoId.split('_')[1] || videoId;
-                
                 iframePlayer = document.createElement('iframe');
                 iframePlayer.src = `https://vk.com/video_ext.php?oid=-${oid}&id=${id}&hd=2&autoplay=0`;
                 iframePlayer.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
                 videoContainer.appendChild(iframePlayer);
             }
-            // 3. Прямая ссылка (MP4 / M3U8)
             else {
                 currentPlatform = 'direct';
                 player = document.createElement('video');
@@ -257,113 +377,7 @@
             }
         }
 
-        document.getElementById('load-btn').addEventListener('click', () => {
-            const url = document.getElementById('video-url').value;
-            if (url && isHost) socket.emit('set_video', { room: roomId, url: url });
-        });
-
-        socket.on('video_changed', (data) => {
-            loadVideo(data.url);
-            document.getElementById('video-url').value = data.url;
-        });
-
-        // --- СИНХРОНИЗАЦИЯ ЧЕРЕЗ POSTMESSAGE ---
-        socket.on('sync', (data) => {
-            if (currentPlatform === 'direct' && player) {
-                isRemoteAction = true;
-                if (Math.abs(player.currentTime - data.time) > 0.5) player.currentTime = data.time;
-                if (data.action === 'play') player.play();
-                if (data.action === 'pause') player.pause();
-                setTimeout(() => { isRemoteAction = false; }, 300);
-            } 
-            else if (currentPlatform === 'rutube' && iframePlayer) {
-                // Отправляем команду внутрь iframe Rutube
-                if (data.action === 'play') {
-                    iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:play', data: {} }), '*');
-                } else if (data.action === 'pause') {
-                    iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:pause', data: {} }), '*');
-                } else if (data.action === 'seek') {
-                    iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:seek', data: { time: data.time } }), '*');
-                }
-            }
-            else if (currentPlatform === 'vk' && iframePlayer) {
-                // Отправляем команду внутрь iframe VK
-                if (data.action === 'play') {
-                    iframePlayer.contentWindow.postMessage('play', '*');
-                } else if (data.action === 'pause') {
-                    iframePlayer.contentWindow.postMessage('pause', '*');
-                }
-            }
-        });
-
-        // --- ЧАТ ---
-        const chatBox = document.getElementById('chat-messages');
-        const chatInput = document.getElementById('chat-input');
-
-        function sendMsg() {
-            const text = chatInput.value.trim();
-            if (text) {
-                socket.emit('chat', { room: roomId, nickname: myNickname, text: text });
-                chatInput.value = '';
-            }
-        }
-
-        document.getElementById('send-btn').addEventListener('click', sendMsg);
-        chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMsg(); });
-
-        socket.on('chat', (data) => {
-            const el = document.createElement('div');
-            el.className = 'msg';
-            el.id = `msg-${data.msg_id}`;
-            el.innerHTML = `
-                <div class="msg-avatar" style="background: ${getColor(data.nickname)}">${data.nickname[0].toUpperCase()}</div>
-                <div class="msg-body">
-                    <div class="msg-head">
-                        <span class="msg-name">${data.nickname}</span>
-                        <span class="msg-time">${data.time}</span>
-                    </div>
-                    <div class="msg-text">${data.text}</div>
-                    <div class="reactions" id="reacts-${data.msg_id}"></div>
-                </div>
-                <div class="react-menu">
-                    <span onclick="sendReact('${data.msg_id}', '👍')">👍</span>
-                    <span onclick="sendReact('${data.msg_id}', '❤️')">❤️</span>
-                    <span onclick="sendReact('${data.msg_id}', '😂')">😂</span>
-                    <span onclick="sendReact('${data.msg_id}', '🔥')">🔥</span>
-                </div>
-            `;
-            chatBox.appendChild(el);
-            chatBox.scrollTop = chatBox.scrollHeight;
-        });
-
-        socket.on('system_message', (data) => {
-            const el = document.createElement('div');
-            el.className = 'sys-msg';
-            el.innerText = data.text;
-            chatBox.appendChild(el);
-            chatBox.scrollTop = chatBox.scrollHeight;
-        });
-
-        function sendReact(msgId, emoji) {
-            socket.emit('react', { room: roomId, msg_id: msgId, emoji: emoji });
-        }
-
-        socket.on('react', (data) => {
-            const box = document.getElementById(`reacts-${data.msg_id}`);
-            if (box) {
-                let existing = Array.from(box.children).find(el => el.innerText.includes(data.emoji));
-                if (existing) {
-                    let count = parseInt(existing.innerText.replace(data.emoji, '').trim()) || 1;
-                    existing.innerText = `${data.emoji} ${count + 1}`;
-                } else {
-                    const badge = document.createElement('div');
-                    badge.className = 'reaction-badge';
-                    badge.innerText = `${data.emoji} 1`;
-                    box.appendChild(badge);
-                }
-            }
-        });
-
+        // --- УТИЛИТЫ ---
         function switchTab(tabName) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
