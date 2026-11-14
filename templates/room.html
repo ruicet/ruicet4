@@ -32,7 +32,7 @@
         video { width: 100%; height: 100%; max-height: 100vh; background: #000; outline: none; }
         iframe { width: 100%; height: 100%; border: none; background: #000; }
 
-        /* Бейдж с временем */
+        /* Бейдж с временем (только для MP4) */
         #time-badge {
             position: absolute; top: 20px; right: 20px;
             background: rgba(15, 17, 26, 0.85); color: var(--accent);
@@ -41,14 +41,6 @@
             pointer-events: none; z-index: 15; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
             display: none;
         }
-
-        /* Заглушка, если видео не загрузилось */
-        #video-error {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            display: none; flex-direction: column; justify-content: center; align-items: center;
-            background: rgba(0,0,0,0.9); color: var(--dim); text-align: center; padding: 20px; z-index: 10;
-        }
-        #video-error a { color: var(--accent); text-decoration: none; margin-top: 15px; font-weight: bold; }
 
         /* Чат */
         .sidebar { width: 360px; background: var(--panel); display: flex; flex-direction: column; border-left: 1px solid var(--border); }
@@ -129,11 +121,6 @@
     <main>
         <div class="video-container" id="video-container">
             <div id="time-badge">00:00:00</div>
-            <div id="video-error">
-                <h2>Видео недоступно</h2>
-                <p style="margin-top: 10px;">Возможно, видео скрыто настройками приватности или его нельзя встроить на сторонний сайт.</p>
-                <a href="" id="direct-link" target="_blank">Открыть в новой вкладке</a>
-            </div>
         </div>
 
         <div class="sidebar">
@@ -173,8 +160,6 @@
         
         let isHost = false;
         let currentPlatform = '';
-        let hostTime = 0;
-        let hostTimer = null;
         
         const timeBadge = document.getElementById('time-badge');
         const videoContainer = document.getElementById('video-container');
@@ -252,15 +237,10 @@
             socket.on('video_changed', (data) => {
                 loadVideo(data.url);
                 document.getElementById('video-url').value = data.url;
-                hostTime = 0;
-                timeBadge.innerText = '00:00:00';
             });
 
             socket.on('sync', (data) => {
                 if (isHost) return;
-
-                hostTime = data.time;
-
                 if (currentPlatform === 'direct' && player) {
                     isRemoteAction = true;
                     if (data.action === 'play') {
@@ -271,15 +251,10 @@
                         if (!player.paused) player.pause();
                         player.currentTime = data.time;
                     }
-                    else if (data.action === 'seek' || data.action === 'ping') {
+                    else if (data.action === 'seek') {
                         if (Math.abs(player.currentTime - data.time) > 1.5) player.currentTime = data.time;
-                        if (data.is_playing && player.paused) player.play().catch(e => {});
-                        if (!data.is_playing && !player.paused) player.pause();
                     }
                     setTimeout(() => { isRemoteAction = false; }, 300);
-                }
-                else {
-                    timeBadge.innerText = formatTime(data.time);
                 }
             });
 
@@ -350,17 +325,13 @@
             });
         }
 
-        // --- УМНАЯ ЗАГРУЗКА ПЛЕЕРА ---
+        // --- ЗАГРУЗКА ПЛЕЕРА (СТАБИЛЬНАЯ ВЕРСИЯ) ---
         function loadVideo(url) {
             url = url.trim();
             videoContainer.innerHTML = '';
             videoContainer.appendChild(timeBadge);
-            videoContainer.appendChild(document.getElementById('video-error'));
-            
             timeBadge.style.display = 'none';
             timeBadge.innerText = '00:00:00';
-            document.getElementById('video-error').style.display = 'none';
-            clearInterval(hostTimer);
             if (hls) { hls.destroy(); hls = null; }
 
             // 1. YOUTUBE
@@ -368,11 +339,10 @@
             if (ytMatch && ytMatch[1]) {
                 currentPlatform = 'youtube';
                 const iframe = document.createElement('iframe');
-                iframe.src = `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=0&enablejsapi=1`;
+                iframe.src = `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=0`;
                 iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
                 iframe.allowFullscreen = true;
                 videoContainer.appendChild(iframe);
-                timeBadge.style.display = 'block';
                 return;
             }
 
@@ -384,25 +354,22 @@
                 iframe.src = `https://rutube.ru/play/embed/${videoId}/?api=1`;
                 iframe.allow = "clipboard-write; autoplay; fullscreen";
                 videoContainer.appendChild(iframe);
-                timeBadge.style.display = 'block';
                 return;
             }
             
-            // 3. VK VIDEO (Исправлен парсинг)
+            // 3. VK VIDEO
             if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
                 currentPlatform = 'vk';
-                const vkMatch = url.match(/(?:video|embed\/)(-?\d+)_(\d+)/);
+                const vkMatch = url.match(/video(-?\d+)_(\d+)/);
                 if (vkMatch) {
-                    let oid = vkMatch[1]; // Оставляем как есть, минус уже в строке
+                    let oid = vkMatch[1];
                     let id = vkMatch[2];
                     const iframe = document.createElement('iframe');
                     iframe.src = `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&autoplay=0`;
                     iframe.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
                     videoContainer.appendChild(iframe);
-                    timeBadge.style.display = 'block';
                 } else {
-                    document.getElementById('video-error').style.display = 'flex';
-                    document.getElementById('direct-link').href = url;
+                    videoContainer.innerHTML = '<div style="color:white; padding:20px; text-align:center;">Неверный формат ссылки ВК. Скопируйте ссылку из адресной строки.</div>';
                 }
                 return;
             }
@@ -410,7 +377,7 @@
             // 4. DIRECT LINK (MP4 / M3U8)
             currentPlatform = 'direct';
             player = document.createElement('video');
-            player.controls = isHost; 
+            player.controls = true; 
             player.crossOrigin = "anonymous";
             player.style.width = "100%";
             player.style.height = "100%";
@@ -426,36 +393,10 @@
             }
             player.load();
 
-            player.addEventListener('play', () => { 
-                if (isHost && !isRemoteAction) {
-                    socket.emit('sync', { room: roomId, action: 'play', time: player.currentTime, is_playing: true });
-                    startHostTimer();
-                }
-            });
-            player.addEventListener('pause', () => { 
-                if (isHost && !isRemoteAction) {
-                    socket.emit('sync', { room: roomId, action: 'pause', time: player.currentTime, is_playing: false });
-                    clearInterval(hostTimer);
-                }
-            });
-            player.addEventListener('seeked', () => { 
-                if (isHost && !isRemoteAction) socket.emit('sync', { room: roomId, action: 'seek', time: player.currentTime, is_playing: !player.paused });
-            });
-            player.addEventListener('timeupdate', () => {
-                timeBadge.innerText = formatTime(player.currentTime);
-            });
-        }
-
-        // Ручной таймер для встроенных плееров (ВК, YouTube, Rutube)
-        function startHostTimer() {
-            clearInterval(hostTimer);
-            hostTimer = setInterval(() => {
-                if (isHost) {
-                    hostTime++;
-                    timeBadge.innerText = formatTime(hostTime);
-                    socket.emit('sync', { room: roomId, action: 'ping', time: hostTime, is_playing: true });
-                }
-            }, 1000);
+            player.addEventListener('play', () => { if (!isRemoteAction) socket.emit('sync', { room: roomId, action: 'play', time: player.currentTime }); });
+            player.addEventListener('pause', () => { if (!isRemoteAction) socket.emit('sync', { room: roomId, action: 'pause', time: player.currentTime }); });
+            player.addEventListener('seeked', () => { if (!isRemoteAction) socket.emit('sync', { room: roomId, action: 'seek', time: player.currentTime }); });
+            player.addEventListener('timeupdate', () => { timeBadge.innerText = formatTime(player.currentTime); });
         }
 
         function switchTab(tabName) {
