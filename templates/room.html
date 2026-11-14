@@ -30,7 +30,7 @@
         main { display: flex; flex: 1; overflow: hidden; }
         .video-container { flex: 1; background: #000; display: flex; align-items: center; justify-content: center; position: relative; }
         video { width: 100%; height: 100%; max-height: 100vh; background: #000; outline: none; }
-        iframe { width: 100%; height: 100%; border: none; }
+        iframe { width: 100%; height: 100%; border: none; background: #000; }
 
         /* Бейдж с временем */
         #time-badge {
@@ -39,21 +39,16 @@
             padding: 8px 16px; border-radius: 8px; font-family: 'Courier New', monospace;
             font-size: 20px; font-weight: bold; border: 1px solid var(--border);
             pointer-events: none; z-index: 15; box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            display: none; /* Скрыт по умолчанию */
         }
 
-        /* Невидимый щит для гостя, чтобы он не мог кликать по iframe */
-        #guest-blocker {
+        /* Заглушка, если видео не загрузилось */
+        #video-error {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 12; background: transparent; display: none; cursor: not-allowed;
+            display: none; flex-direction: column; justify-content: center; align-items: center;
+            background: rgba(0,0,0,0.9); color: var(--dim); text-align: center; padding: 20px; z-index: 10;
         }
-
-        /* Оверлей автоплея (если браузер блокирует звук) */
-        #autoplay-overlay {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); display: none; flex-direction: column;
-            justify-content: center; align-items: center; z-index: 20; cursor: pointer;
-        }
-        #autoplay-overlay h2 { color: white; font-size: 24px; text-align: center; padding: 20px; background: var(--accent); border-radius: 10px; }
+        #video-error a { color: var(--accent); text-decoration: none; margin-top: 15px; font-weight: bold; }
 
         /* Чат */
         .sidebar { width: 360px; background: var(--panel); display: flex; flex-direction: column; border-left: 1px solid var(--border); }
@@ -134,12 +129,10 @@
     <main>
         <div class="video-container" id="video-container">
             <div id="time-badge">00:00:00</div>
-            <video id="player" controls crossorigin="anonymous"></video>
-            <!-- Щит, который не дает гостю нажать на видео -->
-            <div id="guest-blocker"></div>
-            <!-- Оверлей, если браузер блокирует автоплей -->
-            <div id="autoplay-overlay" onclick="enableAutoplay()">
-                <h2>▶ Нажмите, чтобы начать просмотр</h2>
+            <div id="video-error">
+                <h2>Видео недоступно</h2>
+                <p style="margin-top: 10px;">Возможно, видео скрыто настройками приватности или его нельзя встроить на сторонний сайт.</p>
+                <a href="" id="direct-link" target="_blank">Открыть в новой вкладке</a>
             </div>
         </div>
 
@@ -180,17 +173,14 @@
         
         let isHost = false;
         let currentPlatform = '';
-        let lastHostTime = 0;
-        let hostIsPlaying = false;
-        let syncInterval;
+        let hostTime = 0;
+        let hostTimer = null;
         
         const timeBadge = document.getElementById('time-badge');
         const videoContainer = document.getElementById('video-container');
-        const guestBlocker = document.getElementById('guest-blocker');
-        let player = document.getElementById('player');
-        let iframePlayer = null;
         let isRemoteAction = false;
         let hls;
+        let player;
 
         function formatTime(seconds) {
             if (isNaN(seconds) || seconds === undefined) return '00:00:00';
@@ -233,10 +223,6 @@
             }
         }
 
-        document.getElementById('name-input').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') submitName();
-        });
-
         function initSockets() {
             socket.on('you_are_host', (data) => {
                 isHost = data.is_host;
@@ -249,15 +235,13 @@
                     badge.style.color = "#4ade80";
                     urlInput.disabled = false;
                     loadBtn.disabled = false;
-                    guestBlocker.style.display = 'none'; // Хост может кликать
                 } else {
                     badge.innerText = "Зритель";
                     badge.style.color = "#8b92a5";
                     urlInput.disabled = true;
                     loadBtn.disabled = true;
-                    guestBlocker.style.display = 'block'; // Гость не может кликать по видео
                 }
-                if (data.video_url) loadVideo(data.video_url, true);
+                if (data.video_url) loadVideo(data.video_url);
             });
 
             document.getElementById('load-btn').addEventListener('click', () => {
@@ -266,24 +250,21 @@
             });
 
             socket.on('video_changed', (data) => {
-                loadVideo(data.url, true);
+                loadVideo(data.url);
                 document.getElementById('video-url').value = data.url;
-                hostIsPlaying = false;
-                lastHostTime = 0;
+                hostTime = 0;
                 timeBadge.innerText = '00:00:00';
             });
 
-            // --- ЖЕСТКАЯ СИНХРОНИЗАЦИЯ ---
             socket.on('sync', (data) => {
-                if (isHost) return; // Хост игнорирует команды
+                if (isHost) return;
 
-                hostIsPlaying = data.is_playing;
-                lastHostTime = data.time;
+                hostTime = data.time;
 
                 if (currentPlatform === 'direct' && player) {
                     isRemoteAction = true;
                     if (data.action === 'play') {
-                        if (player.paused) player.play().catch(e => showAutoplay());
+                        if (player.paused) player.play().catch(e => {});
                         if (Math.abs(player.currentTime - data.time) > 1.0) player.currentTime = data.time;
                     } 
                     else if (data.action === 'pause') {
@@ -292,19 +273,14 @@
                     }
                     else if (data.action === 'seek' || data.action === 'ping') {
                         if (Math.abs(player.currentTime - data.time) > 1.5) player.currentTime = data.time;
-                        if (hostIsPlaying && player.paused) player.play().catch(e => showAutoplay());
-                        if (!hostIsPlaying && !player.paused) player.pause();
+                        if (data.is_playing && player.paused) player.play().catch(e => {});
+                        if (!data.is_playing && !player.paused) player.pause();
                     }
-                    setTimeout(() => { isRemoteAction = false; }, 500);
-                } 
-                else if (currentPlatform === 'rutube' && iframePlayer) {
-                    if (data.action === 'play') iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:play', data: {} }), '*');
-                    else if (data.action === 'pause') iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:pause', data: {} }), '*');
-                    else if (data.action === 'seek') iframePlayer.contentWindow.postMessage(JSON.stringify({ type: 'player:seek', data: { time: data.time } }), '*');
+                    setTimeout(() => { isRemoteAction = false; }, 300);
                 }
-                else if (currentPlatform === 'vk' && iframePlayer) {
-                    if (data.action === 'play') iframePlayer.contentWindow.postMessage('play', '*');
-                    else if (data.action === 'pause') iframePlayer.contentWindow.postMessage('pause', '*');
+                else {
+                    // Для iframe (ВК, Rutube) мы просто обновляем таймер визуально
+                    timeBadge.innerText = formatTime(data.time);
                 }
             });
 
@@ -375,50 +351,55 @@
             });
         }
 
-        // --- УПРАВЛЕНИЕ ПЛЕЕРОМ ---
-        function loadVideo(url, isInit = false) {
+        // --- ПЛЕЕР ---
+        function loadVideo(url) {
+            url = url.trim();
             videoContainer.innerHTML = '';
             videoContainer.appendChild(timeBadge);
-            videoContainer.appendChild(guestBlocker);
-            videoContainer.appendChild(document.getElementById('autoplay-overlay'));
-
-            timeBadge.style.display = 'block';
+            videoContainer.appendChild(document.getElementById('video-error'));
+            
+            timeBadge.style.display = 'none';
             timeBadge.innerText = '00:00:00';
-            guestBlocker.style.display = isHost ? 'none' : 'block';
-            document.getElementById('autoplay-overlay').style.display = 'none';
-
+            document.getElementById('video-error').style.display = 'none';
+            clearInterval(hostTimer);
             if (hls) { hls.destroy(); hls = null; }
-            iframePlayer = null;
-            clearInterval(syncInterval);
 
+            // Регулярка для ВК
+            const vkMatch = url.match(/video(-?\d+)_(\d+)/);
+            
             if (url.includes('rutube.ru')) {
                 currentPlatform = 'rutube';
                 let videoId = url.split('/').pop().split('?')[0];
-                iframePlayer = document.createElement('iframe');
-                iframePlayer.src = `https://rutube.ru/play/embed/${videoId}/?api=1`;
-                iframePlayer.allow = "clipboard-write; autoplay; fullscreen";
-                videoContainer.appendChild(iframePlayer);
-                timeBadge.style.display = 'none'; // Таймер только для MP4
+                const iframe = document.createElement('iframe');
+                iframe.src = `https://rutube.ru/play/embed/${videoId}/?api=1`;
+                iframe.allow = "clipboard-write; autoplay; fullscreen";
+                videoContainer.appendChild(iframe);
+                timeBadge.style.display = 'block'; // Показываем таймер для синхронизации
             }
             else if (url.includes('vk.com') || url.includes('vkvideo.ru')) {
                 currentPlatform = 'vk';
-                let videoId = url.split('/').pop().split('?')[0]; 
-                let oid = videoId.split('_')[0].replace('video', '').replace('-', '');
-                let id = videoId.split('_')[1] || videoId;
-                iframePlayer = document.createElement('iframe');
-                iframePlayer.src = `https://vk.com/video_ext.php?oid=-${oid}&id=${id}&hd=2&autoplay=0`;
-                iframePlayer.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
-                videoContainer.appendChild(iframePlayer);
-                timeBadge.style.display = 'none';
+                if (vkMatch) {
+                    let oid = vkMatch[1];
+                    let id = vkMatch[2];
+                    const iframe = document.createElement('iframe');
+                    iframe.src = `https://vk.com/video_ext.php?oid=${oid}&id=${id}&hd=2&autoplay=1`;
+                    iframe.allow = "autoplay; encrypted-media; fullscreen; picture-in-picture";
+                    videoContainer.appendChild(iframe);
+                    timeBadge.style.display = 'block'; 
+                } else {
+                    document.getElementById('video-error').style.display = 'flex';
+                    document.getElementById('direct-link').href = url;
+                }
             }
             else {
                 currentPlatform = 'direct';
                 player = document.createElement('video');
-                player.controls = isHost; // У гостя НЕТ кнопок управления!
+                player.controls = isHost; // Только хост может управлять
                 player.crossOrigin = "anonymous";
                 player.style.width = "100%";
                 player.style.height = "100%";
                 videoContainer.appendChild(player);
+                timeBadge.style.display = 'block';
 
                 if (url.includes('.m3u8') && Hls.isSupported()) {
                     hls = new Hls();
@@ -429,17 +410,16 @@
                 }
                 player.load();
 
-                // --- ЕСЛИ ЭТО ХОСТ ---
                 player.addEventListener('play', () => { 
                     if (isHost && !isRemoteAction) {
                         socket.emit('sync', { room: roomId, action: 'play', time: player.currentTime, is_playing: true });
-                        startSyncPing();
+                        startHostTimer();
                     }
                 });
                 player.addEventListener('pause', () => { 
                     if (isHost && !isRemoteAction) {
                         socket.emit('sync', { room: roomId, action: 'pause', time: player.currentTime, is_playing: false });
-                        stopSyncPing();
+                        clearInterval(hostTimer);
                     }
                 });
                 player.addEventListener('seeked', () => { 
@@ -448,41 +428,19 @@
                 player.addEventListener('timeupdate', () => {
                     timeBadge.innerText = formatTime(player.currentTime);
                 });
-
-                // --- ЕСЛИ ЭТО ГОСТЬ ---
-                if (!isHost && isInit) {
-                    // Если хост уже включил видео, пытаемся его запустить
-                    if (hostIsPlaying) {
-                        player.currentTime = lastHostTime;
-                        player.play().catch(e => showAutoplay());
-                    }
-                }
             }
         }
 
-        function startSyncPing() {
-            clearInterval(syncInterval);
-            syncInterval = setInterval(() => {
-                if (isHost && !player.paused) {
-                    socket.emit('sync', { room: roomId, action: 'ping', time: player.currentTime, is_playing: true });
+        // Ручной таймер для ВК и Rutube (так как iframe не отдает точное время)
+        function startHostTimer() {
+            clearInterval(hostTimer);
+            hostTimer = setInterval(() => {
+                if (isHost) {
+                    hostTime++;
+                    timeBadge.innerText = formatTime(hostTime);
+                    socket.emit('sync', { room: roomId, action: 'ping', time: hostTime, is_playing: true });
                 }
-            }, 2000);
-        }
-        
-        function stopSyncPing() {
-            clearInterval(syncInterval);
-        }
-
-        function showAutoplay() {
-            document.getElementById('autoplay-overlay').style.display = 'flex';
-        }
-
-        function enableAutoplay() {
-            document.getElementById('autoplay-overlay').style.display = 'none';
-            if (currentPlatform === 'direct' && player) {
-                player.currentTime = lastHostTime;
-                player.play().catch(e => console.log(e));
-            }
+            }, 1000);
         }
 
         function switchTab(tabName) {
